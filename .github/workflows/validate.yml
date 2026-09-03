@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Validate shell scripts
         run: |
@@ -47,7 +47,7 @@ jobs:
             -e NGINX_IP_ALLOWLIST_ENABLED=false \
             -v "$cert_dir:/etc/nginx/certs" \
             dsh-aio-nginx:ci nginx -t
-          san="$(openssl x509 -in "$cert_dir/server.crt" -noout -ext subjectAltName)"
+          san="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -ext subjectAltName)"
           case "$san" in
             *'IP Address:203.0.113.10'*) ;;
             *) printf '%s\n' 'IP SAN missing from generated certificate' >&2; exit 1 ;;
@@ -66,7 +66,7 @@ jobs:
             -e NGINX_IP_ALLOWLIST_ENABLED=false \
             -v "$cert_dir:/etc/nginx/certs" \
             dsh-aio-nginx:ci nginx -t
-          san="$(openssl x509 -in "$cert_dir/server.crt" -noout -ext subjectAltName)"
+          san="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -ext subjectAltName)"
           case "$san" in
             *'DNS:example.test'*) ;;
             *) printf '%s\n' 'DNS SAN missing from generated certificate' >&2; exit 1 ;;
