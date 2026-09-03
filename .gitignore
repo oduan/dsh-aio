@@ -1,0 +1,6 @@
+# dsh user data: settings, credentials, sessions and local state
+.dsh/
+.env
+.env.tmp.*
+workspace/
+nginx/certs/

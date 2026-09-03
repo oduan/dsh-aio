@@ -1,0 +1,11 @@
+.git/
+.dsh/
+.env
+.env.tmp.*
+workspace/
+nginx/certs/
+node_modules/
+npm-debug.log*
+*.key
+*.pem
+*.crt

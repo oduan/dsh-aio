@@ -1,0 +1,68 @@
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: nginx/Dockerfile
+    image: dsh-aio-nginx:latest
+    restart: unless-stopped
+
+    # Only Nginx publishes the public port. The dsh service has no ports entry.
+    ports:
+      - "3080:3080"
+
+    environment:
+      NGINX_SELF_SIGNED_CERT: "${NGINX_SELF_SIGNED_CERT:-true}"
+      NGINX_CERT_DAYS: "${NGINX_CERT_DAYS:-365}"
+      NGINX_SERVER_NAME: "${NGINX_SERVER_NAME:-localhost}"
+      NGINX_BASIC_AUTH_USER: "${NGINX_BASIC_AUTH_USER:-admin}"
+      NGINX_BASIC_AUTH_HASH: "${NGINX_BASIC_AUTH_HASH:?Set NGINX_BASIC_AUTH_HASH in .env}"
+      NGINX_IP_ALLOWLIST_ENABLED: "${NGINX_IP_ALLOWLIST_ENABLED:-false}"
+      NGINX_IP_ALLOWLIST: "${NGINX_IP_ALLOWLIST:-}"
+
+    volumes:
+      - ./nginx/certs:/etc/nginx/certs:rw
+
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  dsh:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DSH_ALLOW_REMOTE_PRIVILEGED: "${DSH_ALLOW_REMOTE_PRIVILEGED:-true}"
+    image: dsh-aio:latest
+    restart: unless-stopped
+
+    # dsh only permits loopback. Sharing Nginx's namespace lets Nginx reach
+    # 127.0.0.1:3081 without publishing the dsh service itself.
+    network_mode: "service:nginx"
+    depends_on:
+      nginx:
+        condition: service_started
+
+    working_dir: /workspace
+
+    volumes:
+      - ./.dsh:/root/.dsh
+      - ${DSH_WORKSPACE_PATH:-./workspace}:/workspace
+
+    command:
+      - dsh
+      - web
+      - --host
+      - 127.0.0.1
+      - --port
+      - "3081"
+      - --no-open
+      - --trusted-host
+      - "${DSH_TRUSTED_HOST:?Set DSH_TRUSTED_HOST in .env}"
+
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3081/ >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
