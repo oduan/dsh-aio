@@ -14,7 +14,7 @@
 
 - Linux 主机（推荐）；macOS 或 Windows 需要 Docker Desktop 和 Bash
 - Docker Engine 和 Docker Compose Plugin（启动 Compose 时需要）
-- `openssl`（初始化脚本生成 Basic Auth 哈希；`--no-start` 模式也需要）
+- `openssl`（初始化脚本生成 Basic Auth 哈希）
 - 如果需要公网访问，确保防火墙允许宿主机 `3080/tcp`
 
 ## 启动 dsh
@@ -27,6 +27,7 @@
 git clone https://github.com/oduan/dsh-aio.git
 cd dsh-aio
 ./scripts/setup.sh
+docker compose up -d
 ```
 
 脚本会依次询问访问用的域名/IP、Basic Auth 用户名和密码，以及是否启用 IP 白名单，然后：
@@ -35,22 +36,17 @@ cd dsh-aio
 - 生成 APR1 Basic Auth 哈希，不保存明文密码
 - 写入权限为 `600` 的 `.env`
 - 默认启用 HTTPS 自签名证书和远程 settings API
-- 构建并启动 Compose
+
+脚本只负责生成 `.env` 和本地数据目录，不启动 Docker。随后执行的
+`docker compose up -d` 会在本地镜像不存在时构建镜像并启动服务。
 
 脚本默认使用 `localhost` 和 HTTPS。远程服务器上请在提示中填写用户实际访问的域名或 IP，例如 `dsh.example.com` 或 `203.0.113.10`。
-
-只想生成配置而暂不启动：
-
-```bash
-./scripts/setup.sh --no-start
-```
-
-`--no-start` 不会检查或调用 Docker；稍后再执行 `docker compose up -d --build` 即可启动。
 
 使用普通 HTTP（不推荐在公网使用）：
 
 ```bash
 ./scripts/setup.sh --http
+docker compose up -d
 ```
 
 已有 `.env` 时脚本默认拒绝覆盖；确认要重新生成时才使用 `--force`。
@@ -93,10 +89,10 @@ NGINX_BASIC_AUTH_HASH='$apr1$...$...'
 
 IP 白名单默认关闭。设置 `NGINX_IP_ALLOWLIST_ENABLED=true` 并在 `NGINX_IP_ALLOWLIST` 中填写逗号分隔的 IP 或 CIDR 后，白名单来源无需 Basic Auth，其他来源仍需要用户名和密码。例如：`192.0.2.10,198.51.100.0/24`。当前端口直接发布到宿主机时，Nginx 能看到真实客户端 IP；如果前面还有其他反向代理，需要额外配置真实 IP 转发，否则白名单匹配到的会是前置代理地址。
 
-构建并启动：
+启动：
 
 ```bash
-docker compose up -d --build
+docker compose up -d
 ```
 
 检查状态和日志：
@@ -127,7 +123,7 @@ Nginx 已在 Compose 中运行，并将唯一的宿主机端口 `3080` 反向代
 3. 将 `server.crt`、`server.key` 和访问地址标记文件保存到项目目录的 `nginx/certs/`。
 4. 后续重启复用通过密钥、SAN、主机名和有效期校验的证书；如果 `NGINX_SERVER_NAME` 或 `NGINX_CERT_DAYS` 改变，或证书/私钥校验失败，会重新生成。
 
-新环境推荐直接运行 `./scripts/setup.sh`，证书由容器自动生成。浏览器第一次访问自签名证书时会显示“不受信任”提示，这是预期行为；自签名证书提供加密，但不会提供受公共 CA 信任的身份。
+新环境推荐运行 `./scripts/setup.sh` 后执行 `docker compose up -d`，证书由容器自动生成。浏览器第一次访问自签名证书时会显示“不受信任”提示，这是预期行为；自签名证书提供加密，但不会提供受公共 CA 信任的身份。
 
 证书有效期默认是 36500 天（约 100 年），可通过 `NGINX_CERT_DAYS` 修改。项目不执行自动续期；需要强制重新生成时删除以下文件后重启：
 
