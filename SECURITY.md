@@ -10,7 +10,7 @@ This project runs DeepSeek Harness with access to a local workspace and persiste
 - Keep `DSH_ALLOW_REMOTE_PRIVILEGED=true` behind Nginx authentication and do not publish dsh's internal port directly.
 - Do not use `0.0.0.0/0` or `::/0` as an IP allowlist entry.
 
-The default self-signed certificate encrypts traffic but is not trusted by browsers or public certificate authorities. For public deployments, use a trusted certificate at the TLS termination point.
+The default self-signed certificate is valid for approximately 100 years and encrypts traffic, but it is not trusted by browsers or public certificate authorities. It is checked when the container starts and is not automatically renewed. For public deployments, use a trusted certificate at the TLS termination point.
 
 ## Reporting a vulnerability
 

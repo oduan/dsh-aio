@@ -13,8 +13,8 @@
 ## 前置条件
 
 - Linux 主机（推荐）；macOS 或 Windows 需要 Docker Desktop 和 Bash
-- Docker Engine 和 Docker Compose Plugin
-- `openssl`（初始化脚本用它生成 Basic Auth 哈希）
+- Docker Engine 和 Docker Compose Plugin（启动 Compose 时需要）
+- `openssl`（初始化脚本生成 Basic Auth 哈希；`--no-start` 模式也需要）
 - 如果需要公网访问，确保防火墙允许宿主机 `3080/tcp`
 
 ## 启动 dsh
@@ -45,6 +45,8 @@ cd dsh-aio
 ./scripts/setup.sh --no-start
 ```
 
+`--no-start` 不会检查或调用 Docker；稍后再执行 `docker compose up -d --build` 即可启动。
+
 使用普通 HTTP（不推荐在公网使用）：
 
 ```bash
@@ -68,15 +70,24 @@ mkdir -p .dsh workspace nginx/certs
 DSH_TRUSTED_HOST=dsh.example.com:3080
 ```
 
-生成 Nginx Basic Auth 的 APR1 哈希并写入 `.env`：
+生成 Nginx Basic Auth 的 APR1 哈希并写入 `.env`（不要把密码放在命令行参数中）：
 
 ```bash
-openssl passwd -apr1 '替换为强密码'
+read -r -s -p 'Basic Auth password: ' password
+printf '\n'
+printf '%s\n' "$password" | openssl passwd -apr1 -stdin
+unset password
 ```
 
-将输出填入 `NGINX_BASIC_AUTH_HASH`。`.env` 已被 `.gitignore` 排除，不要提交它。
+将输出填入 `NGINX_BASIC_AUTH_HASH`，并保留单引号，因为哈希包含 `$` 字符：
 
-默认启用 HTTPS 自签名证书和远程特权 API。`NGINX_SELF_SIGNED_CERT=true` 时，Nginx 在首次启动时生成并保存自签名证书；显式设为 `false` 时使用普通 HTTP。`NGINX_SERVER_NAME` 只填写主机名或 IP，不要带端口。
+```dotenv
+NGINX_BASIC_AUTH_HASH='$apr1$...$...'
+```
+
+`.env` 已被 `.gitignore` 排除，不要提交它。
+
+默认启用 HTTPS 自签名证书和远程特权 API。`NGINX_SELF_SIGNED_CERT=true` 时，Nginx 在首次启动时生成并保存有效期约 100 年的自签名证书；显式设为 `false` 时使用普通 HTTP。证书只在容器启动时检查，不会自动续期。`NGINX_SERVER_NAME` 只填写主机名或 IP，不要带端口；它必须与 `DSH_TRUSTED_HOST` 的主机部分一致。
 
 远程访问设置、凭据和其他特权 API 默认由 `DSH_ALLOW_REMOTE_PRIVILEGED=true` 启用；设为 `false` 可恢复 dsh 的 loopback-only 行为。这是构建期开关，只应在 Nginx Basic Auth 已启用时使用；修改后必须重新构建镜像。
 
@@ -114,11 +125,11 @@ Nginx 已在 Compose 中运行，并将唯一的宿主机端口 `3080` 反向代
 1. 使用 `NGINX_SERVER_NAME` 作为证书的 CN 和 SAN。
 2. 域名生成 `DNS:` SAN，IPv4/IPv6 地址生成 `IP:` SAN。
 3. 将 `server.crt`、`server.key` 和访问地址标记文件保存到项目目录的 `nginx/certs/`。
-4. 后续重启复用未过期证书；如果 `NGINX_SERVER_NAME` 改变或证书过期/损坏，会自动重新生成。
+4. 后续重启复用通过密钥、SAN、主机名和有效期校验的证书；如果 `NGINX_SERVER_NAME` 或 `NGINX_CERT_DAYS` 改变，或证书/私钥校验失败，会重新生成。
 
 新环境推荐直接运行 `./scripts/setup.sh`，证书由容器自动生成。浏览器第一次访问自签名证书时会显示“不受信任”提示，这是预期行为；自签名证书提供加密，但不会提供受公共 CA 信任的身份。
 
-证书有效期默认是 365 天，可通过 `NGINX_CERT_DAYS` 修改。需要强制重新生成时删除以下文件后重启：
+证书有效期默认是 36500 天（约 100 年），可通过 `NGINX_CERT_DAYS` 修改。项目不执行自动续期；需要强制重新生成时删除以下文件后重启：
 
 ```bash
 rm -f nginx/certs/server.crt nginx/certs/server.key nginx/certs/.server-name

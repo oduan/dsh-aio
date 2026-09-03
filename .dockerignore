@@ -1,6 +1,8 @@
 .git/
 .dsh/
 .env
+.env.*
+!.env.example
 .env.tmp.*
 workspace/
 nginx/certs/
@@ -9,3 +11,7 @@ npm-debug.log*
 *.key
 *.pem
 *.crt
+*.cer
+*.p12
+*.pfx
+*.jks

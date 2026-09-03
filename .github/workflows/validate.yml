@@ -34,24 +34,40 @@ jobs:
       - name: Smoke-test dsh image
         run: docker run --rm dsh-aio:ci dsh web --help >/dev/null
 
-      - name: Smoke-test generated IP certificate
+      - name: Smoke-test generated IP certificate and reuse
         run: |
+          set -eu
           cert_dir="$(mktemp -d)"
+          trap 'rm -rf "$cert_dir"' EXIT
           auth_hash="$(printf '%s\n' ci-test-password | openssl passwd -apr1 -stdin)"
-          docker run --rm \
-            -e NGINX_SELF_SIGNED_CERT=true \
-            -e NGINX_CERT_DAYS=365 \
-            -e NGINX_SERVER_NAME=203.0.113.10 \
-            -e NGINX_BASIC_AUTH_USER=ci \
-            -e NGINX_BASIC_AUTH_HASH="$auth_hash" \
-            -e NGINX_IP_ALLOWLIST_ENABLED=false \
-            -v "$cert_dir:/etc/nginx/certs" \
-            dsh-aio-nginx:ci nginx -t
+          run_nginx() {
+            docker run --rm \
+              -e NGINX_SELF_SIGNED_CERT=true \
+              -e NGINX_CERT_DAYS=36500 \
+              -e NGINX_SERVER_NAME=203.0.113.10 \
+              -e DSH_TRUSTED_HOST=203.0.113.10:3080 \
+              -e NGINX_BASIC_AUTH_USER=ci \
+              -e NGINX_BASIC_AUTH_HASH="$auth_hash" \
+              -e NGINX_IP_ALLOWLIST_ENABLED=false \
+              -v "$cert_dir:/etc/nginx/certs" \
+              dsh-aio-nginx:ci nginx -t
+          }
+          run_nginx >/dev/null 2>&1
           san="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -ext subjectAltName)"
           case "$san" in
             *'IP Address:203.0.113.10'*) ;;
             *) printf '%s\n' 'IP SAN missing from generated certificate' >&2; exit 1 ;;
           esac
+          docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -checkend 3150000000 >/dev/null 2>&1
+          first_fingerprint="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -fingerprint -sha256)"
+          run_nginx >/dev/null 2>&1
+          reused_fingerprint="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -fingerprint -sha256)"
+          test "$first_fingerprint" = "$reused_fingerprint"
+          docker run --rm -v "$cert_dir:/etc/nginx/certs" --entrypoint openssl dsh-aio-nginx:ci genrsa -out /etc/nginx/certs/replacement.key 2048 >/dev/null 2>&1
+          mv "$cert_dir/replacement.key" "$cert_dir/server.key"
+          run_nginx >/dev/null 2>&1
+          repaired_fingerprint="$(docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -fingerprint -sha256)"
+          test "$first_fingerprint" != "$repaired_fingerprint"
 
       - name: Smoke-test generated DNS certificate
         run: |
@@ -59,8 +75,9 @@ jobs:
           auth_hash="$(printf '%s\n' ci-test-password | openssl passwd -apr1 -stdin)"
           docker run --rm \
             -e NGINX_SELF_SIGNED_CERT=true \
-            -e NGINX_CERT_DAYS=365 \
+            -e NGINX_CERT_DAYS=36500 \
             -e NGINX_SERVER_NAME=example.test \
+            -e DSH_TRUSTED_HOST=example.test:3080 \
             -e NGINX_BASIC_AUTH_USER=ci \
             -e NGINX_BASIC_AUTH_HASH="$auth_hash" \
             -e NGINX_IP_ALLOWLIST_ENABLED=false \
@@ -71,13 +88,48 @@ jobs:
             *'DNS:example.test'*) ;;
             *) printf '%s\n' 'DNS SAN missing from generated certificate' >&2; exit 1 ;;
           esac
+          docker run --rm -v "$cert_dir:/etc/nginx/certs:ro" --entrypoint openssl dsh-aio-nginx:ci x509 -in /etc/nginx/certs/server.crt -noout -checkend 3150000000 >/dev/null 2>&1
+
+      - name: Smoke-test Nginx policy branches
+        run: |
+          set -eu
+          common_env=(
+            -e NGINX_SELF_SIGNED_CERT=false
+            -e NGINX_SERVER_NAME=example.test
+            -e NGINX_BASIC_AUTH_USER=ci
+            -e NGINX_BASIC_AUTH_HASH=ci-placeholder
+          )
+          docker run --rm "${common_env[@]}" \
+            -e DSH_TRUSTED_HOST=example.test:3080 \
+            -e NGINX_IP_ALLOWLIST_ENABLED=true \
+            -e NGINX_IP_ALLOWLIST=192.0.2.10,198.51.100.0/24 \
+            dsh-aio-nginx:ci nginx -t
+          docker run --rm "${common_env[@]}" \
+            -e DSH_TRUSTED_HOST=example.test:3080 \
+            -e NGINX_IP_ALLOWLIST_ENABLED=false \
+            dsh-aio-nginx:ci nginx -t
+          if docker run --rm "${common_env[@]}" \
+            -e DSH_TRUSTED_HOST=example.test:3080 \
+            -e NGINX_IP_ALLOWLIST_ENABLED=true \
+            -e NGINX_IP_ALLOWLIST=0.0.0.0/0 \
+            dsh-aio-nginx:ci nginx -t; then
+            printf '%s\n' 'universal CIDR was accepted' >&2
+            exit 1
+          fi
+          if docker run --rm "${common_env[@]}" \
+            -e DSH_TRUSTED_HOST=other.test:3080 \
+            -e NGINX_IP_ALLOWLIST_ENABLED=false \
+            dsh-aio-nginx:ci nginx -t; then
+            printf '%s\n' 'trusted host mismatch was accepted' >&2
+            exit 1
+          fi
 
       - name: Validate Compose configuration
         env:
           DSH_TRUSTED_HOST: example.test:3080
           DSH_ALLOW_REMOTE_PRIVILEGED: "true"
           NGINX_SELF_SIGNED_CERT: "true"
-          NGINX_CERT_DAYS: "365"
+          NGINX_CERT_DAYS: "36500"
           NGINX_SERVER_NAME: example.test
           NGINX_BASIC_AUTH_USER: ci
           NGINX_BASIC_AUTH_HASH: ci-placeholder

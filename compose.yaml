@@ -12,8 +12,9 @@ services:
 
     environment:
       NGINX_SELF_SIGNED_CERT: "${NGINX_SELF_SIGNED_CERT:-true}"
-      NGINX_CERT_DAYS: "${NGINX_CERT_DAYS:-365}"
+      NGINX_CERT_DAYS: "${NGINX_CERT_DAYS:-36500}"
       NGINX_SERVER_NAME: "${NGINX_SERVER_NAME:-localhost}"
+      DSH_TRUSTED_HOST: "${DSH_TRUSTED_HOST:?Set DSH_TRUSTED_HOST in .env}"
       NGINX_BASIC_AUTH_USER: "${NGINX_BASIC_AUTH_USER:-admin}"
       NGINX_BASIC_AUTH_HASH: "${NGINX_BASIC_AUTH_HASH:?Set NGINX_BASIC_AUTH_HASH in .env}"
       NGINX_IP_ALLOWLIST_ENABLED: "${NGINX_IP_ALLOWLIST_ENABLED:-false}"
@@ -23,10 +24,11 @@ services:
       - ./nginx/certs:/etc/nginx/certs:rw
 
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: ["CMD-SHELL", "nginx -t && curl -fsS -H \"Host: $${DSH_TRUSTED_HOST}\" http://127.0.0.1:3081/ >/dev/null"]
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 10s
 
   dsh:
     build:
