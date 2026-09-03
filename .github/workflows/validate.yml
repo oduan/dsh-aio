@@ -25,12 +25,17 @@ jobs:
           docker build --check -f Dockerfile .
           docker build --check -f nginx/Dockerfile .
 
-      - name: Build and smoke-test images
-        run: |
-          docker build --build-arg DSH_ALLOW_REMOTE_PRIVILEGED=true -t dsh-aio:ci -f Dockerfile .
-          docker build -t dsh-aio-nginx:ci -f nginx/Dockerfile .
-          docker run --rm dsh-aio:ci dsh web --help >/dev/null
+      - name: Build dsh image
+        run: docker build --build-arg DSH_ALLOW_REMOTE_PRIVILEGED=true -t dsh-aio:ci -f Dockerfile .
 
+      - name: Build Nginx image
+        run: docker build -t dsh-aio-nginx:ci -f nginx/Dockerfile .
+
+      - name: Smoke-test dsh image
+        run: docker run --rm dsh-aio:ci dsh web --help >/dev/null
+
+      - name: Smoke-test generated IP certificate
+        run: |
           cert_dir="$(mktemp -d)"
           auth_hash="$(printf '%s\n' ci-test-password | openssl passwd -apr1 -stdin)"
           docker run --rm \
@@ -48,6 +53,25 @@ jobs:
             *) printf '%s\n' 'IP SAN missing from generated certificate' >&2; exit 1 ;;
           esac
 
+      - name: Smoke-test generated DNS certificate
+        run: |
+          cert_dir="$(mktemp -d)"
+          auth_hash="$(printf '%s\n' ci-test-password | openssl passwd -apr1 -stdin)"
+          docker run --rm \
+            -e NGINX_SELF_SIGNED_CERT=true \
+            -e NGINX_CERT_DAYS=365 \
+            -e NGINX_SERVER_NAME=example.test \
+            -e NGINX_BASIC_AUTH_USER=ci \
+            -e NGINX_BASIC_AUTH_HASH="$auth_hash" \
+            -e NGINX_IP_ALLOWLIST_ENABLED=false \
+            -v "$cert_dir:/etc/nginx/certs" \
+            dsh-aio-nginx:ci nginx -t
+          san="$(openssl x509 -in "$cert_dir/server.crt" -noout -ext subjectAltName)"
+          case "$san" in
+            *'DNS:example.test'*) ;;
+            *) printf '%s\n' 'DNS SAN missing from generated certificate' >&2; exit 1 ;;
+          esac
+
       - name: Validate Compose configuration
         env:
           DSH_TRUSTED_HOST: example.test:3080
@@ -60,3 +84,7 @@ jobs:
           NGINX_IP_ALLOWLIST_ENABLED: "false"
           NGINX_IP_ALLOWLIST: ""
         run: docker compose config --quiet
+
+      - name: Remove CI images
+        if: always()
+        run: docker image rm dsh-aio:ci dsh-aio-nginx:ci || true
